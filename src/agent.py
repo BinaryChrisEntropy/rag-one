@@ -21,7 +21,7 @@ def create_rag_agent(index: VectorStoreIndex) -> ReActAgent:
         query_engine=query_engine,
         metadata=ToolMetadata(
             name="document_db_tool",
-            description="Nützlich, um spezifische Fragen zu Finanzberichten, Bilanzen, Glossaren und Unternehmensdaten zu beantworten."
+            description="Useful for answering specific questions about financial reports, balance sheets, glossaries, and company data."
         )
     )
     

@@ -1,6 +1,6 @@
 import chromadb
 from pathlib import Path
-from typing import List
+from typing import List, Set, Tuple
 from llama_index.core import VectorStoreIndex, StorageContext, Settings
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
@@ -45,3 +45,31 @@ def get_or_create_index(nodes: List[BaseNode] = None) -> VectorStoreIndex:
             storage_context=storage_context
         )
         return index
+
+def get_indexed_state(index: VectorStoreIndex, source_pdf: str) -> Tuple[int, Set[str]]:
+    """
+    Returns how many nodes are currently indexed for a source PDF and which
+    'content_hash' values they carry. A count of 0 means the document has not
+    been indexed yet; more than one hash (or a count that does not match the
+    freshly parsed document) means the stored nodes are stale or duplicated.
+    """
+    collection = index.vector_store.client
+    result = collection.get(where={"source_pdf": source_pdf}, include=["metadatas"])
+    metadatas = result["metadatas"] or []
+    hashes = {
+        metadata["content_hash"]
+        for metadata in metadatas
+        if metadata and metadata.get("content_hash")
+    }
+    return len(result["ids"]), hashes
+
+def delete_source_from_index(index: VectorStoreIndex, source_pdf: str) -> int:
+    """
+    Removes all nodes belonging to a source PDF from the vector store.
+    Returns the number of deleted entries.
+    """
+    collection = index.vector_store.client
+    existing_ids = collection.get(where={"source_pdf": source_pdf})["ids"]
+    if existing_ids:
+        collection.delete(ids=existing_ids)
+    return len(existing_ids)

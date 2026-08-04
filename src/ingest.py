@@ -4,7 +4,11 @@ from pathlib import Path
 from config import PDF_DIR
 from src.parse import parse_pdf_to_markdown
 from src.chunk import chunk_markdown_file
-from src.index import get_or_create_index
+from src.index import (
+    get_or_create_index,
+    get_indexed_state,
+    delete_source_from_index,
+)
 
 # Setup logging
 logging.basicConfig(
@@ -16,9 +20,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ingest")
 
-def run_ingestion(force_reparse: bool = False):
+def run_ingestion(force_reparse: bool = False, force_reindex: bool = False):
     """
     Main ingestion workflow.
+
+    Ingestion is idempotent: a document whose content is already indexed is
+    skipped, and a changed document replaces its previous nodes instead of
+    being added a second time. Use force_reindex=True to re-embed everything.
     """
     logger.info("Starting ingestion workflow...")
     
@@ -42,14 +50,30 @@ def run_ingestion(force_reparse: bool = False):
             # Parse with Docling
             markdown_path = parse_pdf_to_markdown(pdf_path, force_reparse=force_reparse)
             
-            # Chunk with MarkdownNodeParser
+            # Chunk with MarkdownNodeParser (cheap - no embeddings yet)
             nodes = chunk_markdown_file(markdown_path)
-            if nodes:
-                logger.info(f"Generated {len(nodes)} nodes. Inserting into index...")
-                index.insert_nodes(nodes)
-                logger.info(f"Successfully indexed {pdf_path.name}.")
-            else:
+            if not nodes:
                 logger.warning(f"No nodes generated for {pdf_path.name}.")
+                continue
+
+            # Skip documents that are already indexed exactly once with identical
+            # content. A mismatching node count means stale or duplicated entries,
+            # which the deletion below cleans up.
+            content_hash = nodes[0].metadata["content_hash"]
+            indexed_count, indexed_hashes = get_indexed_state(index, pdf_path.name)
+            is_current = indexed_hashes == {content_hash} and indexed_count == len(nodes)
+            if is_current and not force_reindex:
+                logger.info(f"{pdf_path.name} is unchanged and already indexed. Skipping.")
+                continue
+
+            # Replace any previous (or duplicated) nodes for this document
+            deleted = delete_source_from_index(index, pdf_path.name)
+            if deleted:
+                logger.info(f"Removed {deleted} outdated node(s) for {pdf_path.name}.")
+
+            logger.info(f"Generated {len(nodes)} nodes. Inserting into index...")
+            index.insert_nodes(nodes)
+            logger.info(f"Successfully indexed {pdf_path.name}.")
         except Exception as e:
             logger.error(f"Error processing {pdf_path.name}: {e}", exc_info=True)
             
